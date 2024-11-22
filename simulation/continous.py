@@ -6,12 +6,18 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import scipy
 from tqdm import tqdm
+import shutil 
 
 
 # Define constants
 UNLIMITED_SUBSTRATES = ["ADP", "ATP", "PROTON", "WATER", "NAD", "NADH", "NADP", "NAD+", "CO2", "OXYGEN-MOLECULE", "NADPH", "NADH-P-OR-NOP", "CARBON-DIOXIDE", "NADc-P-OR-NOP"]
-ENZYME_CONCENTRATION = 1  # µM
+ENZYME_CONCENTRATION = 100  # µM
 INITIAL_METABOLITE_CONCENTRATION = 1500
+
+TINKERED_REACTIONS = [
+    {"kcat": 5.7, "keq": "+i", "products": {"FRUCTOSE-6P": 1, "Pi": 1}, "substrate_kms": {"FRUCTOSE-16-DIPHOSPHATE": 52.5}, "substrates": {"FRUCTOSE-16-DIPHOSPHATE": 1, "WATER": 1}},
+    {"kcat": 1.0, "keq": "+i", "products": {"AMMONIA": 1, "GLT": 1, "PROTON": 1}, "substrate_kms": {"GLN": 1700.0}, "substrates": {"GLN": 1, "WATER": 1}},
+]
 
 with open("dataset.json", "r") as f:
     # List of reaction dictionaries.
@@ -48,7 +54,7 @@ curr_metabolite_concentrations = np.full((len(metabolite_to_idx.values()), ), IN
 last_t = 0
 perturbed = 0
 
-def calculate_concentration_changes(t, metabolite_concentrations, pbar):
+def calculate_concentration_changes(t, metabolite_concentrations, pbar, bruv, set_change):
     """
     Calculate the change in concentrations of metabolites based on reaction data.
     
@@ -138,12 +144,13 @@ def calculate_concentration_changes(t, metabolite_concentrations, pbar):
                 change = v_net * stoich
                 concentration_changes[metabolite_to_idx[product]] += change
     
-    pbar.update(t - last_t)
+    pbar.update(round(t - last_t, 2))
     last_t = t
 
-
-    if (2000 <= t) and (perturbed < 5000):
-        concentration_changes[metabolite_to_idx["GMP"]] = 1500 - metabolite_concentrations[metabolite_to_idx["GMP"]]
+    
+    if (2000 <= t) and (perturbed < 15000):
+        #bruv = "DUTP"
+        concentration_changes[metabolite_to_idx[bruv]] = set_change - metabolite_concentrations[metabolite_to_idx[bruv]]
         #print(concentration_changes[metabolite_to_idx["GMP"]])
         #print(t)
         perturbed += 1
@@ -160,37 +167,83 @@ def calculate_concentration_changes(t, metabolite_concentrations, pbar):
     return concentration_changes
 
 
-
-NUM_ITER = 10000
-t = np.linspace(0, NUM_ITER, NUM_ITER * 10)
-
-# """
-with tqdm(total=NUM_ITER, unit="‰") as pbar:
-    sol = scipy.integrate.solve_ivp(calculate_concentration_changes, [0, NUM_ITER], curr_metabolite_concentrations, method="LSODA", dense_output=True, args=[pbar])
-
-print(sol)
-
-z = sol.sol(t)
-
-with open("simulation.npy", "wb") as f:
-    np.save(f, z)
-
-# """
-
 with open('simulation.npy', 'rb') as f:
-    z = np.load(f)
+    original = np.load(f)
 
 
-""""
-datapoints = z[metabolite_to_idx["GMP"]]
-plt.plot(t, datapoints)
-plt.show()
-"""
+pairs = [("Pi", 0), ("Pi", 1e+8), ("DUMP", 0), ("DUMP", 5000), ("S-ADENOSYLMETHIONINE", 0), ("S-ADENOSYLMETHIONINE", 5000)]
 
-# """
-for metabolite in metabolite_to_idx.keys():
-    datapoints = z[metabolite_to_idx[metabolite]]
+
+for idx, (bruv, set_change) in enumerate(pairs):
+    NUM_ITER = 10000
+    t = np.linspace(0, NUM_ITER, NUM_ITER * 10)
+
+
+    # """
+    with tqdm(total=NUM_ITER, unit="‰") as pbar:
+        sol = scipy.integrate.solve_ivp(calculate_concentration_changes, [0, NUM_ITER], curr_metabolite_concentrations, method="LSODA", dense_output=True, args=[pbar, bruv, set_change])
+    
+    #print(sol)
+
+    z = sol.sol(t)
+    # """
+
+
+
+    """
+    with open("simulation.npy", "wb") as f:
+        np.save(f, z)
+    """
+
+
+
+
+    """"
+    datapoints = z[metabolite_to_idx["GMP"]]
     plt.plot(t, datapoints)
-    plt.savefig(f"graphs/{metabolite}.jpg")
-    plt.clf()
-# """
+    plt.show()
+    """
+
+    print("finished sim")
+
+    # """
+    for metabolite in metabolite_to_idx.keys():
+        datapoints = z[metabolite_to_idx[metabolite]]
+        og = original[metabolite_to_idx[metabolite]]
+
+        # Plot the iterative data with markers and a solid line
+        plt.plot(t, og, label="Original Continous", color="purple", linestyle='-', linewidth=1.5)
+        
+        # Plot the continuous data with a dashed line and no markers
+        plt.plot(t, datapoints, label="Perturbed Continous", color="orange", linestyle='-', linewidth=1.5)
+
+        # Add title and axis labels with LaTeX for µM symbol
+        plt.title(f"Comparison for {metabolite}", fontsize=16, fontweight='bold')
+        plt.xlabel("Iteration", fontsize=14)
+        plt.ylabel(r'Concentration ($\mu$M)', fontsize=14)
+
+        # Add a legend with improved positioning and font size
+        plt.legend(loc="upper left", fontsize=12, frameon=False)
+
+        # Enable grid for better readability of the plot
+        plt.grid(True, linestyle='--', alpha=0.7)
+
+        # Improve the layout to avoid overlap
+        plt.tight_layout()
+
+        # Save the plot with higher resolution (300 dpi)
+        plt.savefig(f"graphs/{metabolite}", dpi=600)
+        
+        # Clear figure for the next plot
+        plt.clf()
+    # """
+
+    print("finished saving")
+
+    shutil.make_archive(f"graphs{idx}", "zip", "graphs")
+
+    print("finished zipping")
+
+    last_t = 0
+    perturbed = 0
+
